@@ -55,6 +55,15 @@ jobs:
           echo 'declare interface Window { debugging?: any }' | cat - build/pkg/lib/cockpit-dark-theme.ts > cockpit/cockpit-dark-theme.ts
           tsc cockpit/cockpit-dark-theme.ts --outDir cockpit --declaration false --esModuleInterop
           rm -f cockpit/cockpit-dark-theme.js.map
+          rm -f cockpit/cockpit-dark-theme.ts
+
+      - name: Publish to npm
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: cockpit
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
