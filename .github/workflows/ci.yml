@@ -52,8 +52,15 @@ jobs:
           echo '{"name": "cockpit-base1", "version": '"$VERSION"', "main": "index.mjs", "type": "module"}' > cockpit/package.json
           cat cockpit/cockpit.js >> cockpit/index.mjs
           printf "\n\nexport default cockpit;" >> cockpit/index.mjs
-          tsc build/pkg/lib/cockpit-dark-theme.ts --outDir cockpit --declaration false --esModuleInterop
+          echo 'declare interface Window { debugging?: any }' | cat - build/pkg/lib/cockpit-dark-theme.ts > cockpit/cockpit-dark-theme.ts
+          tsc cockpit/cockpit-dark-theme.ts --outDir cockpit --declaration false --esModuleInterop
           rm -f cockpit/cockpit-dark-theme.js.map
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-base1-artifact
+          path: cockpit/
 
       - name: Clean up build artifacts
         run: |
