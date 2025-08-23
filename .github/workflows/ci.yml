@@ -6,8 +6,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      VERSION: 323
+    strategy:
+      matrix:
+        VERSION: [323, 337]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,13 +22,13 @@ jobs:
 
       - name: Download cockpit tarball
         run: |
-          TARBALL=cockpit-$VERSION.tar.xz
-          URL=https://github.com/cockpit-project/cockpit/releases/download/$VERSION/$TARBALL
+          TARBALL=cockpit-${{ matrix.VERSION }}.tar.xz
+          URL=https://github.com/cockpit-project/cockpit/releases/download/${{ matrix.VERSION }}/$TARBALL
           wget $URL
 
       - name: Extract tarball
         run: |
-          TARBALL=cockpit-$VERSION.tar.xz
+          TARBALL=cockpit-${{ matrix.VERSION }}.tar.xz
           EXTRACT_DIR=build
           mkdir -p $EXTRACT_DIR
           tar -xf $TARBALL --strip-components=1 -C $EXTRACT_DIR
@@ -51,7 +52,7 @@ jobs:
       - name: Determine next npm version
         id: next_version
         run: |
-          MAJOR=$VERSION
+          MAJOR=${{ matrix.VERSION }}
           PACKAGE=cockpit-base1
           # Get all published versions for this major
           VERSIONS=$(npm view "$PACKAGE" versions --json | jq -r ".[]" | grep "^$MAJOR\\.[0-9]\\+\\.[0-9]\\+$" || true)
@@ -71,7 +72,7 @@ jobs:
         run: |
           mkdir -p cockpit
           cp -r build/dist/base1/* cockpit
-            echo "{\"name\": \"cockpit-base1\", \"version\": \"${{ steps.next_version.outputs.next_version }}\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
+          echo "{\"name\": \"cockpit-base1\", \"version\": \"${{ steps.next_version.outputs.next_version }}\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
           cat cockpit/cockpit.js >> cockpit/index.mjs
           printf "\n\nexport default cockpit;" >> cockpit/index.mjs
           echo 'declare interface Window { debugging?: any }' | cat - build/pkg/lib/cockpit-dark-theme.ts > cockpit/cockpit-dark-theme.ts
@@ -94,5 +95,5 @@ jobs:
 
       - name: Clean up build artifacts
         run: |
-          rm -f cockpit-$VERSION.tar.xz
+          rm -f cockpit-${{ matrix.VERSION }}.tar.xz
           rm -rf build
