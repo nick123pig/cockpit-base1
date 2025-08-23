@@ -15,6 +15,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Download cockpit tarball
         run: |
@@ -41,12 +44,9 @@ jobs:
         run: |
           npm install -g typescript
 
-      - name: Build cockpit
+      - name: Build package
         run: |
           cd build && node build.js
-
-      - name: Prepare output directory
-        run: |
           mkdir -p cockpit
           cp -r build/dist/base1/* cockpit
           echo "{\"name\": \"cockpit-base1\", \"version\": \"$VERSION.0.0\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
@@ -60,8 +60,6 @@ jobs:
       - name: Publish to npm
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: cockpit
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --access public
 
