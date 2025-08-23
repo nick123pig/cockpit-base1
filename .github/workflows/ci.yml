@@ -44,9 +44,12 @@ jobs:
         run: |
           npm install -g typescript
 
-      - name: Build package
+      - name: Build cockpit
         run: |
           cd build && node build.js
+
+      - name: Prepare output directory
+        run: |
           mkdir -p cockpit
           cp -r build/dist/base1/* cockpit
           echo "{\"name\": \"cockpit-base1\", \"version\": \"$VERSION.0.0\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
