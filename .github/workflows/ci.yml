@@ -72,7 +72,7 @@ jobs:
         run: |
           mkdir -p cockpit
           cp -r build/dist/base1/* cockpit
-          echo "{\"name\": \"cockpit-base1\", \"version\": \"${{ steps.next_version.outputs.next_version }}\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
+          echo "{\"name\": \"cockpit-base1\", \"version\": \"${{ steps.next_version.outputs.next_version }}\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\"}" > cockpit/package.json
           cat cockpit/cockpit.js >> cockpit/index.mjs
           printf "\n\nexport default cockpit;" >> cockpit/index.mjs
           echo 'declare interface Window { debugging?: any }' | cat - build/pkg/lib/cockpit-dark-theme.ts > cockpit/cockpit-dark-theme.ts
@@ -86,12 +86,6 @@ jobs:
         working-directory: cockpit
         run: |
           npm publish --access public
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cockpit-base1-artifact
-          path: cockpit/
 
       - name: Clean up build artifacts
         run: |

@@ -4,22 +4,3 @@ This package provides a minimal, repackaged ESM build of the [Cockpit base1 libr
 
 ### ⚠️ Not Officially Supported
 This repackaging is not endorsed or supported by the Cockpit project. Use at your own risk.
-
-## Usage
-
-Install via npm:
-
-```sh
-npm install cockpit-base1
-```
-
-Import and use in your project:
-
-```js
-import cockpit from 'cockpit-base1';
-// ...use cockpit as needed
-```
-
-## License
-
-See [Cockpit upstream license](https://github.com/cockpit-project/cockpit/blob/main/COPYING).
