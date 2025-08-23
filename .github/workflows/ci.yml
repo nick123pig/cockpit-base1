@@ -48,17 +48,37 @@ jobs:
         run: |
           cd build && node build.js
 
+      - name: Determine next npm version
+        id: next_version
+        run: |
+          MAJOR=$VERSION
+          PACKAGE=cockpit-base1
+          # Get all published versions for this major
+          VERSIONS=$(npm view "$PACKAGE" versions --json | jq -r ".[]" | grep "^$MAJOR\\.[0-9]\\+\\.[0-9]\\+$" || true)
+          if [ -z "$VERSIONS" ]; then
+            NEXT_VERSION="$MAJOR.0.1"
+          else
+            # Find the highest minor
+            MAX_MINOR=$(echo "$VERSIONS" | awk -F. '{print $2}' | sort -n | tail -1)
+            # Find the highest patch for that minor
+            MAX_PATCH=$(echo "$VERSIONS" | grep "^$MAJOR\.$MAX_MINOR\\.[0-9]\\+$" | awk -F. '{print $3}' | sort -n | tail -1)
+            NEXT_PATCH=$((MAX_PATCH + 1))
+            NEXT_VERSION="$MAJOR.$MAX_MINOR.$NEXT_PATCH"
+          fi
+          echo "Next version: $NEXT_VERSION"
+          echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
       - name: Prepare output directory
         run: |
           mkdir -p cockpit
           cp -r build/dist/base1/* cockpit
-          echo "{\"name\": \"cockpit-base1\", \"version\": \"$VERSION.0.0\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
+            echo "{\"name\": \"cockpit-base1\", \"version\": \"${{ steps.next_version.outputs.next_version }}\", \"main\": \"index.mjs\", \"type\": \"module\"}" > cockpit/package.json
           cat cockpit/cockpit.js >> cockpit/index.mjs
           printf "\n\nexport default cockpit;" >> cockpit/index.mjs
           echo 'declare interface Window { debugging?: any }' | cat - build/pkg/lib/cockpit-dark-theme.ts > cockpit/cockpit-dark-theme.ts
           tsc cockpit/cockpit-dark-theme.ts --outDir cockpit --declaration false --esModuleInterop
           rm -f cockpit/cockpit-dark-theme.js.map
           rm -f cockpit/cockpit-dark-theme.ts
+          cp README.md cockpit/
 
       - name: Publish to npm
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
