@@ -215,6 +215,7 @@ full() {
     next_version=$(version "$version")
     
     package "$next_version"
+    patch
     copy
     
     if [[ "$publish_flag" == "true" ]]; then
