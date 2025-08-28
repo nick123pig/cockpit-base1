@@ -105,7 +105,6 @@ build() {
 version() {
     local major=${1:-$VERSION}
     local package=${2:-$PACKAGE_NAME}
-    log "Determining next npm version for major $major"
     
     # Get all published versions for this major
     local versions
@@ -125,7 +124,6 @@ version() {
         next_version="$major.$max_minor.$next_patch"
     fi
     
-    log "Next version: $next_version"
     echo "$next_version"
 }
 
