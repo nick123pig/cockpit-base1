@@ -155,7 +155,16 @@ package() {
     done
     
     # Create package.json
-    echo "{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\"}" > "$OUTPUT_DIR/package.json"
+    local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\"}"
+    local build_package="$BUILD_DIR/package.json"
+    
+    if [[ -f "$build_package" ]]; then
+        # Merge dependencies from build package.json
+        echo "$base_package" | jq --slurpfile build_deps <(jq '{dependencies}' "$build_package") '. + $build_deps[0]' > "$OUTPUT_DIR/package.json"
+    else
+        # Fallback to basic package.json if build package.json doesn't exist
+        echo "$base_package" | jq '.' > "$OUTPUT_DIR/package.json"
+    fi
     
     # Create main index file
     cat "$BUILD_DIR/dist/base1/cockpit.js" >> "$OUTPUT_DIR/index.mjs" || error "Failed to create index.mjs"
