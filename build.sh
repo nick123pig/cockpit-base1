@@ -38,7 +38,7 @@ download() {
     if [[ -f "$tarball" ]]; then
         warn "Tarball $tarball already exists, skipping download"
     else
-        wget "$url" || error "Failed to download tarball from $url"
+        wget -nv "$url" || error "Failed to download tarball from $url"
     fi
 }
 
@@ -56,7 +56,7 @@ extract() {
 }
 
 # Function to patch build.js
-patch() {
+configure-build() {
     log "Patching build.js"
     
     local build_file="$BUILD_DIR/build.js"
@@ -154,6 +154,22 @@ package() {
     printf "\n\nexport default cockpit;" >> "$OUTPUT_DIR/index.mjs"
 }
 
+patch() {
+    log "Patching"
+
+    # Patch page.scss in the output directory if it exists
+    local page_scss="$OUTPUT_DIR/lib/page.scss"
+    if [[ -f "$page_scss" ]]; then
+        log "Patching page.scss to comment out patternfly-5-overrides import"
+        if sed --version >/dev/null 2>&1; then
+            sed -i 's/@use "\.\/patternfly\/patternfly-5-overrides\.scss";/\/\* @use ".\/patternfly\/patternfly-5-overrides.scss"; \*\//' "$page_scss" || warn "Failed to patch page.scss"
+        else
+            #macOS
+            sed -i '' 's/@use "\.\/patternfly\/patternfly-5-overrides\.scss";/\/\* @use ".\/patternfly\/patternfly-5-overrides.scss"; \*\//' "$page_scss" || warn "Failed to patch page.scss"
+        fi
+    fi
+}
+
 # Function to copy additional files
 copy() {
     log "Copying additional files"
@@ -190,7 +206,7 @@ full() {
     
     download "$version"
     extract "$version"
-    patch
+    configure-build
     install-deps
     install-ts
     build
@@ -216,10 +232,11 @@ Usage: $0 [COMMAND] [OPTIONS]
 Commands:
     download [VERSION]              Download cockpit tarball
     extract [VERSION]               Extract tarball
-    patch                           Patch build.js
+    configure-build                 Configure build environment
     install-deps                    Install npm dependencies
     install-ts                      Install TypeScript globally
     build                           Build cockpit
+    patch                           Patch cockpit
     version [MAJOR] [PACKAGE]       Determine next npm version
     package [VERSION]               Build base package
     copy                            Copy additional files
@@ -250,8 +267,8 @@ case "${1:-}" in
     extract)
         extract "$2"
         ;;
-    patch)
-        patch
+    configure-build)
+        configure-build
         ;;
     install-deps)
         install-deps
@@ -261,6 +278,9 @@ case "${1:-}" in
         ;;
     build)
         build
+        ;;
+    patch)
+        patch
         ;;
     version)
         version "$2" "$3"
