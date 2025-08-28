@@ -146,6 +146,14 @@ package() {
         fi
     done
     
+    # Convert TSX files to ESM
+    for file in "$OUTPUT_DIR/lib/"*.tsx; do
+        if [[ -f "$file" ]]; then
+            tsc "$file" --outDir "$OUTPUT_DIR/lib" --declaration false --esModuleInterop --noEmitOnError false --jsx react || warn "TSX compilation failed for $file"
+            rm -f "$file"
+        fi
+    done
+    
     # Create package.json
     echo "{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\"}" > "$OUTPUT_DIR/package.json"
     
@@ -157,16 +165,11 @@ package() {
 patch() {
     log "Patching"
 
-    # Patch page.scss in the output directory if it exists
-    local page_scss="$OUTPUT_DIR/lib/page.scss"
-    if [[ -f "$page_scss" ]]; then
-        log "Patching page.scss to comment out patternfly-5-overrides import"
-        if sed --version >/dev/null 2>&1; then
-            sed -i 's/@use "\.\/patternfly\/patternfly-5-overrides\.scss";/\/\* @use ".\/patternfly\/patternfly-5-overrides.scss"; \*\//' "$page_scss" || warn "Failed to patch page.scss"
-        else
-            #macOS
-            sed -i '' 's/@use "\.\/patternfly\/patternfly-5-overrides\.scss";/\/\* @use ".\/patternfly\/patternfly-5-overrides.scss"; \*\//' "$page_scss" || warn "Failed to patch page.scss"
-        fi
+    # Empty the patternfly-5-overrides.scss file if it exists
+    local overrides_file="$OUTPUT_DIR/lib/patternfly/patternfly-5-overrides.scss"
+    if [[ -f "$overrides_file" ]]; then
+        log "Emptying patternfly-5-overrides.scss file"
+        > "$overrides_file" || warn "Failed to empty patternfly-5-overrides.scss"
     fi
 }
 
