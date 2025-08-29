@@ -98,7 +98,7 @@ build() {
     [[ -d "$BUILD_DIR" ]] || error "Build directory $BUILD_DIR not found"
     
     cd "$BUILD_DIR" 
-    node build.js || error "Failed to build cockpit"
+    node build.js base1 || error "Failed to build cockpit"
     cd - > /dev/null
 }
 
@@ -214,15 +214,17 @@ patch() {
             patched=true
         fi
         
-        # Check and replace import cockpit from "cockpit"
-        if grep -q 'import.*from[[:space:]]*"cockpit"' "$file" 2>/dev/null; then
+        # Check and replace import cockpit from "cockpit" or 'cockpit'
+        if grep -q "import.*from.*['\"]cockpit['\"]" "$file" 2>/dev/null; then
             log "Patching import statements in: $file"
             if sed --version >/dev/null 2>&1; then
-                # GNU sed
-                sed -i 's/from[[:space:]]*"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with GNU sed"
+                # GNU sed - handle both single and double quotes
+                sed -i 's/from *"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with GNU sed"
+                sed -i "s/from *'cockpit'/from 'cockpit-base1'/g" "$file" || warn "Failed to patch imports in $file with GNU sed"
             else
-                # macOS sed
-                sed -i '' 's/from[[:space:]]*"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with macOS sed"
+                # macOS sed - handle both single and double quotes
+                sed -i '' 's/from *"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with macOS sed"
+                sed -i '' "s/from *'cockpit'/from 'cockpit-base1'/g" "$file" || warn "Failed to patch imports in $file with macOS sed"
             fi
             patched=true
         fi
