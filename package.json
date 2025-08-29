@@ -1,0 +1,15 @@
+{
+  "name": "cockpit-base1-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build tools for cockpit-base1 package",
+  "devDependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/cli": "^7.23.0",
+    "@babel/preset-typescript": "^7.23.0",
+    "@babel/preset-react": "^7.22.0"
+  },
+  "scripts": {
+    "babel": "babel"
+  }
+}

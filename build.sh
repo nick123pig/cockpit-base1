@@ -80,14 +80,14 @@ install-deps() {
     cd - > /dev/null
 }
 
-# Function to install TypeScript globally
-install-ts() {
-    log "Installing TypeScript globally"
+# Function to install build dependencies
+install-build-deps() {
+    log "Installing build dependencies"
     
-    if command -v tsc &> /dev/null; then
-        warn "TypeScript already installed, skipping"
+    if [[ -f "package.json" ]]; then
+        npm install || error "Failed to install build dependencies"
     else
-        npm install -g typescript || error "Failed to install TypeScript"
+        error "package.json not found in project root"
     fi
 }
 
@@ -97,7 +97,8 @@ build() {
     
     [[ -d "$BUILD_DIR" ]] || error "Build directory $BUILD_DIR not found"
     
-    cd "$BUILD_DIR" && node build.js || error "Failed to build cockpit"
+    cd "$BUILD_DIR" 
+    node build.js || error "Failed to build cockpit"
     cd - > /dev/null
 }
 
@@ -138,19 +139,31 @@ package() {
     mkdir -p "$OUTPUT_DIR/lib"
     cp -r "$BUILD_DIR/pkg/lib/"* "$OUTPUT_DIR/lib" || error "Failed to copy lib files"
     
-    # Convert TypeScript files to ESM
-    for file in "$OUTPUT_DIR/lib/"*.ts; do
-        if [[ -f "$file" ]]; then
-            tsc "$file" --outDir "$OUTPUT_DIR/lib" --declaration false --esModuleInterop --noEmitOnError false || warn "TypeScript compilation failed for $file"
-            rm -f "$file"
-        fi
-    done
-    
-    # Convert TSX files to ESM
-    for file in "$OUTPUT_DIR/lib/"*.tsx; do
-        if [[ -f "$file" ]]; then
-            tsc "$file" --outDir "$OUTPUT_DIR/lib" --declaration false --esModuleInterop --noEmitOnError false --jsx react || warn "TSX compilation failed for $file"
-            rm -f "$file"
+    # Convert TypeScript and TSX files using Babel (strip types while preserving JSX)
+    for file in "$OUTPUT_DIR/lib/"*.{ts,tsx}; do
+        if [[ -f "$file" && ! "$file" =~ \.d\.ts$ ]]; then
+            local basename=$(basename "$file")
+            local dirname=$(dirname "$file")
+            local extension="${basename##*.}"
+            local name="${basename%.*}"
+            
+            local output_file
+            if [[ "$extension" == "tsx" ]]; then
+                output_file="$dirname/$name.jsx"
+            else
+                output_file="$dirname/$name.js"
+            fi
+
+            "node_modules/.bin/babel" "$file" --out-file "$output_file" \
+                --filename "$file" \
+                --config-file "$(pwd)/.babelrc.json" \
+                || warn "Failed to convert $file using Babel"
+            
+            if [[ -f "$output_file" ]]; then
+                rm -f "$file"
+            else
+                warn "Output file was not created for $file"
+            fi
         fi
     done
     
@@ -179,6 +192,48 @@ patch() {
     if [[ -f "$overrides_file" ]]; then
         log "Emptying patternfly-5-overrides.scss file"
         > "$overrides_file" || warn "Failed to empty patternfly-5-overrides.scss"
+    fi
+
+    # convert any references to require("cockpit") to require("cockpit-base1")
+    log "Converting require(\"cockpit\") to require(\"cockpit-base1\") in $OUTPUT_DIR/lib"
+    
+    # Find all files in lib directory and replace require("cockpit") with require("cockpit-base1")
+    if find "$OUTPUT_DIR/lib" -type f \( -name "*.js" -o -name "*.mjs" -o -name "*.jsx" \) -print0 | while IFS= read -r -d '' file; do
+        local patched=false
+        
+        # Check and replace require("cockpit")
+        if grep -q 'require("cockpit")' "$file" 2>/dev/null; then
+            log "Patching require statements in: $file"
+            if sed --version >/dev/null 2>&1; then
+                # GNU sed
+                sed -i 's/require("cockpit")/require("cockpit-base1")/g' "$file" || warn "Failed to patch require in $file with GNU sed"
+            else
+                # macOS sed
+                sed -i '' 's/require("cockpit")/require("cockpit-base1")/g' "$file" || warn "Failed to patch require in $file with macOS sed"
+            fi
+            patched=true
+        fi
+        
+        # Check and replace import cockpit from "cockpit"
+        if grep -q 'import.*from[[:space:]]*"cockpit"' "$file" 2>/dev/null; then
+            log "Patching import statements in: $file"
+            if sed --version >/dev/null 2>&1; then
+                # GNU sed
+                sed -i 's/from[[:space:]]*"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with GNU sed"
+            else
+                # macOS sed
+                sed -i '' 's/from[[:space:]]*"cockpit"/from "cockpit-base1"/g' "$file" || warn "Failed to patch imports in $file with macOS sed"
+            fi
+            patched=true
+        fi
+        
+        if [[ "$patched" == true ]]; then
+            log "Completed patching: $file"
+        fi
+    done; then
+        log "Completed patching cockpit references"
+    else
+        warn "No files found to patch or patching failed"
     fi
 }
 
@@ -220,7 +275,7 @@ full() {
     extract "$version"
     configure-build
     install-deps
-    install-ts
+    install-build-deps
     build
     
     local next_version
@@ -247,7 +302,7 @@ Commands:
     extract [VERSION]               Extract tarball
     configure-build                 Configure build environment
     install-deps                    Install npm dependencies
-    install-ts                      Install TypeScript globally
+    install-build-deps              Install build dependencies
     build                           Build cockpit
     patch                           Patch cockpit
     version [MAJOR] [PACKAGE]       Determine next npm version
@@ -286,8 +341,8 @@ case "${1:-}" in
     install-deps)
         install-deps
         ;;
-    install-ts)
-        install-ts
+    install-build-deps)
+        install-build-deps
         ;;
     build)
         build
