@@ -309,8 +309,14 @@ stage-publish() {
     # npm stage list needs interactive auth (not available via OIDC), so a
     # stage E409/"Cannot stage previously published version" means it's
     # already staged - treat as success and let the approval happen on npmjs.com.
+    # Careful with set -e: `out=$(npm stage publish ...)` would kill the script
+    # on failure and silently throw away npm's error, so run it under an `if`.
     local out rc
-    out=$(npm stage publish --access public --tag "$tag" --loglevel verbose 2>&1); rc=$?
+    if out=$(npm stage publish --access public --tag "$tag" --loglevel verbose 2>&1); then
+        rc=0
+    else
+        rc=$?
+    fi
     if [[ $rc -ne 0 ]]; then
         if grep -qi "Cannot stage previously published version" <<<"$out" || grep -qi "E409" <<<"$out"; then
             warn "$PACKAGE_NAME@$ver is already staged or published - nothing to do. Approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
