@@ -34,7 +34,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22' # npm stage publish requires Node >= 22.14
-          registry-url: 'https://registry.npmjs.org'
+          # No registry-url here! That would make setup-node inject a dummy
+          # NODE_AUTH_TOKEN, which overrides the OIDC path and breaks
+          # trusted publishing (ENEEDAUTH). OIDC needs to be the only auth.
 
       # Runners ship an older npm; stage publish needs >= 11.15
       - name: Ensure npm CLI 11
