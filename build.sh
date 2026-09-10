@@ -76,7 +76,10 @@ install-deps() {
     
     [[ -d "$BUILD_DIR" ]] || error "Build directory $BUILD_DIR not found"
     
-    cd "$BUILD_DIR" && npm ci || error "Failed to install npm dependencies"
+    # npm install, not npm ci: the lock file in the cockpit tarball only has
+    # the optional platform deps (esbuild/sass-embedded/fsevents) of one
+    # platform, which npm >= 11 rejects under npm ci (EUSAGE).
+    cd "$BUILD_DIR" && npm install --no-audit --no-fund || error "Failed to install npm dependencies"
     cd - > /dev/null
 }
 
