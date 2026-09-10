@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        VERSION: [323, 337]
+        VERSION: [323, 337, 367]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
