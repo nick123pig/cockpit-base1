@@ -310,14 +310,23 @@ stage-publish() {
     # stage E409/"Cannot stage previously published version" means it's
     # already staged - treat as success and let the approval happen on npmjs.com.
     local out rc
-    out=$(npm stage publish --access public --tag "$tag" 2>&1); rc=$?
+    out=$(npm stage publish --access public --tag "$tag" --loglevel verbose 2>&1); rc=$?
     if [[ $rc -ne 0 ]]; then
         if grep -qi "Cannot stage previously published version" <<<"$out" || grep -qi "E409" <<<"$out"; then
             warn "$PACKAGE_NAME@$ver is already staged or published - nothing to do. Approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
             cd - > /dev/null || true
             return 0
         fi
+        # Surface the real npm error: npm masks OIDC exchange failures unless
+        # verbose, and GitHub redacts further. Print stdout+stderr and the npm
+        # debug log tail so the actual auth failure is visible in CI output.
         echo "$out" >&2
+        local dbg
+        dbg=$(ls -t "$HOME"/.npm/_logs/*-debug-0.log 2>/dev/null | head -1)
+        if [[ -n "$dbg" ]]; then
+            echo "--- npm debug log: $dbg ---" >&2
+            tail -60 "$dbg" >&2
+        fi
         cd - > /dev/null || true
         error "npm stage publish failed (see message above)"
     fi

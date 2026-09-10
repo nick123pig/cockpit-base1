@@ -42,6 +42,15 @@ jobs:
       - name: Ensure npm CLI 11
         run: npm install -g npm@11
 
+      # DIAGNOSTIC: print the OIDC env + npm config so the real staged-publish
+      # auth error is visible (npm 11 swallows OIDC exchange errors silently).
+      - name: Diagnose npm OIDC environment
+        run: |
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:+<set>}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+<set>}"
+          echo "NODE_AUTH_TOKEN=${NODE_AUTH_TOKEN:+<set>}"
+          npm --version
+
       - name: Build and stage package to npm
         run: ./build.sh stage-publish ${{ matrix.VERSION }}
 
