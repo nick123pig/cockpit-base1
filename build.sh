@@ -295,8 +295,33 @@ stage-publish() {
     fi
 
     cd "$OUTPUT_DIR" || error "Cannot enter $OUTPUT_DIR"
-    npm stage publish --access public --tag "$tag" || error "npm stage publish failed (see message above)"
-    log "Staged $PACKAGE_NAME@$(jq -r '.version' package.json) (tag: $tag) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
+    local ver
+    ver=$(jq -r '.version' package.json 2>/dev/null || true)
+
+    # Skip if this version is already live on the registry.
+    if [[ -n "$ver" ]] && npm view "$PACKAGE_NAME@$ver" version >/dev/null 2>&1; then
+        warn "$PACKAGE_NAME@$ver is already published on npm - nothing to do"
+        cd - > /dev/null || true
+        return 0
+    fi
+
+    # A previous run may already have staged this version (pending approval).
+    # npm stage list needs interactive auth (not available via OIDC), so a
+    # stage E409/"Cannot stage previously published version" means it's
+    # already staged - treat as success and let the approval happen on npmjs.com.
+    local out rc
+    out=$(npm stage publish --access public --tag "$tag" 2>&1); rc=$?
+    if [[ $rc -ne 0 ]]; then
+        if grep -qi "Cannot stage previously published version" <<<"$out" || grep -qi "E409" <<<"$out"; then
+            warn "$PACKAGE_NAME@$ver is already staged or published - nothing to do. Approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
+            cd - > /dev/null || true
+            return 0
+        fi
+        echo "$out" >&2
+        cd - > /dev/null || true
+        error "npm stage publish failed (see message above)"
+    fi
+    log "Staged $PACKAGE_NAME@${ver:-$(jq -r '.version' package.json)} (tag: $tag) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
     cd - > /dev/null || true
 }
 
