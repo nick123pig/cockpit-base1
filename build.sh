@@ -283,9 +283,20 @@ stage-publish() {
     log "Building and staging $PACKAGE_NAME for version $version"
     full "$version" false
 
+    # npm rejects implicitly tagging "latest" when the new version is lower
+    # than the current latest (parallel cockpit majors). Only the newest major
+    # may own "latest"; older lines get their own stable dist-tag.
+    local majors="323 337 367"
+    local highest
+    highest=$(echo "$majors" | tr ' ' '\n' | sort -n | tail -1)
+    local tag=latest
+    if [[ "$version" != "$highest" ]]; then
+        tag="line-$version"
+    fi
+
     cd "$OUTPUT_DIR" || error "Cannot enter $OUTPUT_DIR"
-    npm stage publish --access public || error "npm stage publish failed (see message above)"
-    log "Staged $PACKAGE_NAME@$(jq -r '.version' package.json) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
+    npm stage publish --access public --tag "$tag" || error "npm stage publish failed (see message above)"
+    log "Staged $PACKAGE_NAME@$(jq -r '.version' package.json) (tag: $tag) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
     cd - > /dev/null || true
 }
 
