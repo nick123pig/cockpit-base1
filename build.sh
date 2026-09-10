@@ -167,8 +167,10 @@ package() {
         fi
     done
     
-    # Create package.json
-    local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\"}"
+    # Create package.json. 'repository' MUST point at the real GitHub repo:
+    # trusted publishing (npm publish/stage publish via OIDC) validates it.
+    local repo_url="${REPOSITORY_URL:-git+https://github.com/nick123pig/cockpit-base1.git}"
+    local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\", \"repository\": {\"type\": \"git\", \"url\": \"$repo_url\"}}"
     local build_package="$BUILD_DIR/package.json"
     
     if [[ -f "$build_package" ]]; then
@@ -246,15 +248,84 @@ copy() {
     [[ -f "README.md" ]] && cp README.md "$OUTPUT_DIR/" || warn "README.md not found"
 }
 
-# Function to publish to npm
+# Function to build and stage the package as a publishable tarball
+stage() {
+    local version=${1:-$VERSION}
+    log "Building and staging package for version $version"
+
+    full "$version" false
+
+    local root
+    root=$(pwd)
+    mkdir -p staging
+    if ! (cd "$OUTPUT_DIR" && npm pack --quiet --pack-destination "$root/staging" >/dev/null 2>&1); then
+        error "Failed to create staging tarball for version $version"
+    fi
+
+    local tarball
+    tarball=$(ls "$root/staging/cockpit-base1-*.tgz" 2>/dev/null | head -1)
+    [[ -f "$tarball" ]] || error "Staging tarball was not created for version $version"
+    log "Staged $tarball"
+}
+
+# Build and push into npm's staging area (npm stage publish; needs npm >= 11.15).
+# Uses trusted publishing (OIDC) - no token/OTP. Approve in the browser on npmjs.com.
+stage-publish() {
+    local version=${1:-$VERSION}
+
+    if ! npm --version 2>/dev/null | awk -F. '{ if ($1 > 11 || ($1 == 11 && $2 > 15) || ($1 == 11 && $2 == 15)) ok = 1 } END { exit ok ? 0 : 1 }'; then
+        error "npm stage publish requires npm CLI v11.15.0+ (found $(npm --version 2>/dev/null)). Update it with: npm install -g npm@11"
+    fi
+
+    log "Building and staging $PACKAGE_NAME for version $version"
+    full "$version" false
+
+    cd "$OUTPUT_DIR" || error "Cannot enter $OUTPUT_DIR"
+    npm stage publish --access public || error "npm stage publish failed (see message above)"
+    log "Staged $PACKAGE_NAME@$(jq -r '.version' package.json) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
+    cd - > /dev/null || true
+}
+
+# Direct publish fallback (not used by CI). Prompts for your 2FA code.
 publish() {
-    log "Publishing package to npm"
-    
-    [[ -d "$OUTPUT_DIR" ]] || error "Output directory $OUTPUT_DIR not found"
+    local target=${1:-}
+    local start_dir
+    start_dir=$(pwd)
+
+    if ! npm whoami >/dev/null 2>&1; then
+        error "Not authenticated with npm. Run 'npm login' first, then try again."
+    fi
+    log "Authenticated with npm as $(npm whoami 2>/dev/null)"
+
+    # Publish a staged tarball: ./build.sh publish path/to/cockpit-base1-1.2.3.tgz
+    if [[ -n "$target" && -f "$target" ]]; then
+        local dir name ver
+        dir=$(dirname "$target")
+        name=$(basename "$target")
+        ver="${name##*-}"; ver="${ver%.tgz}"
+        [[ "$name" == "$PACKAGE_NAME-"*.tgz ]] || error "Not a $PACKAGE_NAME tarball: $target"
+
+        if npm view "$PACKAGE_NAME@$ver" version >/dev/null 2>&1; then
+            warn "$PACKAGE_NAME@$ver is already published on npm - nothing to do"
+            return 0
+        fi
+
+        cd "$dir" || error "Cannot enter $dir"
+        log "Publishing $PACKAGE_NAME@$ver from $name. When prompted, enter your 2FA code from your authenticator app."
+        npm publish "$name" --access public || error "npm publish failed (see message above)"
+        log "Published $PACKAGE_NAME@$ver"
+        cd "$start_dir" || true
+        return 0
+    fi
+
+    # Fallback: publish whatever was built last
+    [[ -d "$OUTPUT_DIR" ]] || error "Output directory $OUTPUT_DIR not found - build it first (e.g. ./build.sh stage $VERSION)"
     [[ -f "$OUTPUT_DIR/package.json" ]] || error "package.json not found in $OUTPUT_DIR"
-    
-    cd "$OUTPUT_DIR" && npm publish --access public || error "Failed to publish package"
-    cd - > /dev/null
+    cd "$OUTPUT_DIR" || error "Cannot enter $OUTPUT_DIR"
+    log "Publishing from $OUTPUT_DIR. When prompted, enter your 2FA code from your authenticator app."
+    npm publish --access public || error "npm publish failed (see message above)"
+    log "Published successfully"
+    cd "$start_dir" || exit
 }
 
 # Function to clean up build artifacts
@@ -264,6 +335,7 @@ cleanup() {
     rm -f *.tar.xz
     rm -rf "$BUILD_DIR"
     rm -rf "$OUTPUT_DIR"
+    rm -rf "staging"
 }
 
 # Function to run full build
@@ -310,8 +382,10 @@ Commands:
     version [MAJOR] [PACKAGE]       Determine next npm version
     package [VERSION]               Build base package
     copy                            Copy additional files
-    publish                         Publish to npm
-    cleanup [VERSION]               Clean up artifacts
+    publish [TARBALL]              Publish to npm directly (requires 2FA prompt)
+    stage [VERSION]                 Build + npm pack tarball (inspect only, no publish)
+    stage-publish [VERSION]         Build + npm stage publish (staged registry, approve in browser)
+    cleanup                         Clean up artifacts
     full [VERSION] [PUBLISH]        Run full build (PUBLISH=true to publish)
     help                            Show this help
 
@@ -323,7 +397,9 @@ Environment Variables:
 
 Examples:
     $0 full 337                     # Full build for version 337
-    $0 full 323 true               # Full build for version 323 with publishing
+    $0 stage 323                  # Build and stage tarball for version 323
+    $0 stage-publish 323          # Build + npm stage publish (approve in browser on npmjs.com)
+    $0 publish staged/...tgz      # Publish a staged tarball (local, prompts 2FA)
     $0 download 337                # Just download version 337
     $0 version 323                 # Get next version for major 323
 EOF
@@ -360,6 +436,12 @@ case "${1:-}" in
         ;;
     copy)
         copy
+        ;;
+    stage)
+        stage "$2"
+        ;;
+    stage-publish)
+        stage-publish "$2"
         ;;
     publish)
         publish

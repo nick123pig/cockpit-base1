@@ -1,26 +1,47 @@
-name: CI
+name: Build & Stage to npm
+
+# Builds each version and pushes it to npm's staging area (npm stage publish).
+# Releases only happen when you Approve on npmjs.com - CI has no tokens, no
+# secrets, no OTP. Auth is npm trusted publishing (OIDC) against this repo
+# + workflow filename configured in the package settings on npmjs.com.
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # required for trusted publishing
+
+concurrency:
+  group: stage-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         VERSION: [323, 337, 367]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22' # npm stage publish requires Node >= 22.14
           registry-url: 'https://registry.npmjs.org'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Run full build
-        run: |
-          ./build.sh full ${{ matrix.VERSION }} ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          ./build.sh cleanup
+      # Runners ship an older npm; stage publish needs >= 11.15
+      - name: Ensure npm CLI 11
+        run: npm install -g npm@11
+
+      - name: Build and stage package to npm
+        run: ./build.sh stage-publish ${{ matrix.VERSION }}
+
+      - name: Clean up build artifacts
+        run: ./build.sh cleanup
