@@ -379,7 +379,7 @@ stage-publish() {
     # in STAGE_VERSIONS may own "latest"; older lines get their own tag.
     local versions="${STAGE_VERSIONS:-323 337 367}"
     local highest
-    highest=$(echo "$versions" | tr ' ' '\n' | sort -n | tail -1)
+    highest=$(echo "$versions" | tr ' ' '\n' | sort -t. -k1,1n -k2,2n | tail -1)
     local tag=latest
     if [[ "$version" != "$highest" ]]; then
         tag="line-$version"

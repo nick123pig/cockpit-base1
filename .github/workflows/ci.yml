@@ -1,6 +1,7 @@
 name: Build & Stage to npm
 
-# Builds every cockpit-base1 version in one sequential loop and pushes each
+# Builds cockpit-base1 for every cockpit release >= STAGE_START (auto-discovered
+# from GitHub, unbounded) in one sequential loop, and pushes each
 # into npm's staging area (npm stage publish). Releases only happen when you
 # Approve on npmjs.com - CI has no tokens, no secrets, no OTP. Auth is npm
 # trusted publishing (OIDC) against this repo + workflow filename configured
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   stage:
     runs-on: ubuntu-latest
-    timeout-minutes: 120 # 68 versions x ~40s each, plus slack
+    timeout-minutes: 240 # ~40s per release once; fast thereafter (fingerprint skip)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,21 +59,35 @@ jobs:
             echo "::notice::No prior stage manifest - first run will build everything"
           fi
 
+      # Discover the full cockpit release list from GitHub (unbounded: new
+      # cockpit releases are picked up automatically), then keep those >= the
+      # starting number. STAGE_START is the one knob to adjust.
+      - name: Discover cockpit releases
+        id: releases
+        env:
+          STAGE_START: "311"
+        run: |
+          set -uo pipefail
+          versions="$(gh api 'repos/cockpit-project/cockpit/releases?per_page=100' --paginate \
+              --jq '.[] | select(.draft != true) | .tag_name' 2>/dev/null \
+            | grep -E '^[0-9]+([.][0-9]+)?$' \
+            | awk -F. -v s="$STAGE_START" 'NF <= 2 && $1 >= s' \
+            | sort -t. -k1,1n -k2,2n | tr '\n' ' ')"
+          if [[ -z "${versions// /}" ]]; then
+            echo "::error::No cockpit releases found >= $STAGE_START (GitHub API failed?)"
+            exit 1
+          fi
+          echo "STAGE_VERSIONS=$versions" >> "$GITHUB_ENV"
+
       - name: Build and stage all versions
         env:
           STAGE_MANIFEST: state/stage-manifest.json
-          STAGE_RANGE: "311 367" # first and last integer cockpit major
-          STAGE_POINTS: >-
-            311.1 311.2 323.1 329.1 334.1 334.2 336.1 336.2 341.1 345.1 345.2
-            353.1 356.1 356.2 356.3 360.1 363.1 363.2
         run: |
           set -uo pipefail
-          versions="$({ seq $STAGE_RANGE; printf '%s\n' $STAGE_POINTS; } | sort -t. -k1,1n -k2,2n | tr '\n' ' ')"
-          export STAGE_VERSIONS="$versions"
-          echo "::notice::Staging cockpit versions: $versions"
-          echo "::notice::total versions: $(wc -w <<<"$versions")"
+          echo "::notice::Staging cockpit versions: $STAGE_VERSIONS"
+          echo "::notice::total versions: $(wc -w <<<"$STAGE_VERSIONS")"
           failures=()
-          for v in $versions; do
+          for v in $STAGE_VERSIONS; do
             echo "==================== staging version $v ===================="
             if ./build.sh stage-publish "$v"; then
               echo "::notice::staged $v"
