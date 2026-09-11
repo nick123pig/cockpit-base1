@@ -63,18 +63,41 @@ jobs:
       # cockpit releases are picked up automatically), then keep those >= the
       # starting number. STAGE_START is the one knob to adjust.
       - name: Discover cockpit releases
-        id: releases
         env:
           STAGE_START: "311"
         run: |
           set -uo pipefail
-          versions="$(gh api 'repos/cockpit-project/cockpit/releases?per_page=100' --paginate \
-              --jq '.[] | select(.draft != true) | .tag_name' 2>/dev/null \
-            | grep -E '^[0-9]+([.][0-9]+)?$' \
+          # Fetch every cockpit release (drafts excluded), paged. Deliberately
+          # curl + jq (both on runners): gh api --paginate + --jq errors out.
+          tags="$(mktemp)"
+          page=1
+          err=0
+          while (( page <= 50 )); do
+            url="https://api.github.com/repos/cockpit-project/cockpit/releases?per_page=100&page=$page"
+            if body="$(curl -fsSL "$url")"; then
+              if [[ "$(printf '%s' "$body" | jq -r 'length')" == "0" ]]; then
+                break # clean end of releases
+              fi
+              printf '%s' "$body" \
+                | jq -r '.[] | select(.draft != true) | .tag_name' >> "$tags" \
+                || { echo "::error::Failed to parse cockpit release page $page"; rm -f "$tags"; exit 1; }
+              page=$((page + 1))
+            else
+              err=1
+              break
+            fi
+          done
+          if (( err != 0 )); then
+            echo "::error::GitHub API failed while fetching cockpit releases (page $page). Check api.github.com access/rate limits."
+            rm -f "$tags"
+            exit 1
+          fi
+          versions="$(grep -E '^[0-9]+([.][0-9]+)?$' "$tags" \
             | awk -F. -v s="$STAGE_START" 'NF <= 2 && $1 >= s' \
-            | sort -t. -k1,1n -k2,2n | tr '\n' ' ')"
+            | sort -t. -k1,1n -k2,2n | tr '\n' ' ' || true)"
+          rm -f "$tags"
           if [[ -z "${versions// /}" ]]; then
-            echo "::error::No cockpit releases found >= $STAGE_START (GitHub API failed?)"
+            echo "::error::No cockpit releases >= $STAGE_START found on api.github.com"
             exit 1
           fi
           echo "STAGE_VERSIONS=$versions" >> "$GITHUB_ENV"
