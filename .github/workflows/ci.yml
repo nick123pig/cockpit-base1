@@ -40,12 +40,16 @@ jobs:
 
       - name: Build and stage all versions
         env:
-          STAGE_RANGE: "300 367" # first and last cockpit major to stage
+          STAGE_RANGE: "311 367" # first and last integer cockpit major
+          STAGE_POINTS: >-
+            311.1 311.2 323.1 329.1 334.1 334.2 336.1 336.2 341.1 345.1 345.2
+            353.1 356.1 356.2 356.3 360.1 363.1 363.2
         run: |
           set -uo pipefail
-          versions="$(seq $STAGE_RANGE)"
+          versions="$({ seq $STAGE_RANGE; printf '%s\n' $STAGE_POINTS; } | sort -t. -k1,1n -k2,2n | tr '\n' ' ')"
           export STAGE_VERSIONS="$versions"
           echo "::notice::Staging cockpit versions: $versions"
+          echo "::notice::total versions: $(wc -w <<<"$versions")"
           failures=()
           for v in $versions; do
             echo "==================== staging version $v ===================="

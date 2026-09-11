@@ -106,28 +106,32 @@ build() {
 }
 
 # Function to determine next npm version
+# npm version = <cockpit-tag>.<patch>: plain tags keep a .0 minor (337.0.x),
+# point releases carry their own minor (356.3.x). tag may be dotted or plain.
+version-prefix() {
+    local tag=${1:-$VERSION}
+    if [[ "$tag" == *.* ]]; then echo "$tag"; else echo "$tag.0"; fi
+}
+
 version() {
     local major=${1:-$VERSION}
     local package=${2:-$PACKAGE_NAME}
-    
-    # Get all published versions for this major
+    local prefix
+    prefix=$(version-prefix "$major")
+    local re
+    re="${prefix//./\\.}"
+
     local versions
-    versions=$(npm view "$package" versions --json 2>/dev/null | jq -r ".[]" | grep "^$major\.[0-9]\+\.[0-9]\+$" || true)
-    
+    versions=$(npm view "$package" versions --json 2>/dev/null | jq -r '.[]'         | grep "^${re}\.[0-9]\+$" || true)
+
     local next_version
     if [[ -z "$versions" ]]; then
-        next_version="$major.0.1"
+        next_version="$prefix.1"
     else
-        # Find the highest minor
-        local max_minor
-        max_minor=$(echo "$versions" | awk -F. '{print $2}' | sort -n | tail -1)
-        # Find the highest patch for that minor
         local max_patch
-        max_patch=$(echo "$versions" | grep "^$major\.$max_minor\.[0-9]\+$" | awk -F. '{print $3}' | sort -n | tail -1)
-        local next_patch=$((max_patch + 1))
-        next_version="$major.$max_minor.$next_patch"
+        max_patch=$(echo "$versions" | awk -F. '{print $NF}' | sort -n | tail -1)
+        next_version="$prefix.$((max_patch + 1))"
     fi
-    
     echo "$next_version"
 }
 
@@ -175,10 +179,11 @@ package() {
     # 'buildInfo' fingerprints the tooling+source used, so future CI runs can
     # skip rebuilding a version whose inputs haven't changed.
     local repo_url="${REPOSITORY_URL:-git+https://github.com/nick123pig/cockpit-base1.git}"
-    local bmaj btool bsrc build_info
-    bmaj=${next_version%%.*}
+    local btag btool bsrc build_info
+    btag=${next_version%.*}     # 337.0.10 -> 337.0, 356.3.2 -> 356.3
+    btag=${btag%.0}             # 337.0 -> 337 (plain tags have no .0 tarball)
     btool=$(tooling-hash 2>/dev/null || true)
-    bsrc=$(sha256sum "cockpit-$bmaj.tar.xz" 2>/dev/null | awk '{print $1}')
+    bsrc=$(sha256sum "cockpit-$btag.tar.xz" 2>/dev/null | awk '{print $1}')
     build_info="${btool:-none}-${bsrc:-none}"
     local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\", \"repository\": {\"type\": \"git\", \"url\": \"$repo_url\"}, \"buildInfo\": \"$build_info\"}"
     local build_package="$BUILD_DIR/package.json"
@@ -288,8 +293,11 @@ tooling-hash() {
 
 # Highest published version for a cockpit major (e.g. 337 -> 337.0.10, "" if none).
 published-latest() {
+    local prefix re
+    prefix=$(version-prefix "$1")
+    re="${prefix//./\\.}"
     npm view "$PACKAGE_NAME" versions --json 2>/dev/null \
-        | jq -r '.[]' | grep "^$1\.[0-9]\+\.[0-9]\+$" | sort -V | tail -1
+        | jq -r '.[]' | grep "^${re}\.[0-9]\+$" | sort -V | tail -1
 }
 
 # Build and push into npm's staging area (npm stage publish; needs npm >= 11.15).
