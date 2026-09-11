@@ -291,6 +291,14 @@ tooling-hash() {
         | sha256sum | awk '{print $1}'
 }
 
+# Per-file hashes (same file list as tooling-hash) for change diagnostics.
+tooling-files() {
+    local f
+    for f in build.sh .babelrc.json package.json README.md LICENSE; do
+        [[ -f "$f" ]] && printf '%s\t%s\n' "$f" "$(sha256sum "$f" 2>/dev/null | awk '{print $1}')"
+    done
+}
+
 # Highest published version for a cockpit major (e.g. 337 -> 337.0.10, "" if none).
 published-latest() {
     local prefix re
@@ -307,11 +315,12 @@ published-latest() {
 record-stage() {
     local mf="${STAGE_MANIFEST:-state/stage-manifest.json}"
     mkdir -p "$(dirname "$mf")"
-    local tmp
+    local tmp files_json
     tmp=$(mktemp)
     if [[ -f "$mf" ]]; then cp "$mf" "$tmp"; else echo '{}' > "$tmp"; fi
-    if jq --arg t "$1" --arg v "$2" --arg tool "$3" --arg src "$4" \
-        '.[$t] = {v: $v, t: $tool, s: $src}' "$tmp" > "${mf}.tmp" 2>/dev/null; then
+    files_json=$(tooling-files | jq -R 'split("\t") | {key: .[0], value: .[1]}' | jq -s 'from_entries' 2>/dev/null || echo '{}')
+    if jq --arg t "$1" --arg v "$2" --arg tool "$3" --arg src "$4" --argjson files "$files_json" \
+        '.[$t] = {v: $v, t: $tool, s: $src, files: $files}' "$tmp" > "${mf}.tmp" 2>/dev/null; then
         mv "${mf}.tmp" "$mf"
     else
         warn "Could not update stage manifest $mf"
@@ -341,7 +350,7 @@ stage-publish() {
     #    identical inputs (covers versions still awaiting approval).
     rec=$(jq -c --arg t "$version" '.[$t] // empty' "${STAGE_MANIFEST:-state/stage-manifest.json}" 2>/dev/null || true)
     if [[ "${STAGE_FORCE:-0}" != "1" && -n "$rec" ]]; then
-        local rt rs rv
+        local rt rs rv f rh nh
         rt=$(jq -r '.t' <<<"$rec" 2>/dev/null || true)
         rs=$(jq -r '.s' <<<"$rec" 2>/dev/null || true)
         rv=$(jq -r '.v' <<<"$rec" 2>/dev/null || true)
@@ -349,7 +358,12 @@ stage-publish() {
             log "No changes: $rv already staged/published with the same tooling+source. Skipping $version."
             return 0
         fi
-        log "Inputs changed for $version: last staged $rv (${rt}-${rs}) != $local_tool-$local_src"
+        log "Inputs changed for $version: last staged $rv (${rt}-${rs}) != $local_tool-$local_src - rebuilding"
+        for f in build.sh .babelrc.json package.json README.md LICENSE; do
+            rh=$(jq -r --arg f "$f" '.files[$f] // ""' <<<"$rec" 2>/dev/null || true)
+            nh=$(sha256sum "$f" 2>/dev/null | awk '{print $1}')
+            [[ -n "$rh" && -n "$nh" && "$rh" != "$nh" ]] && log "  changed file: $f (${rh:0:12} -> ${nh:0:12})"
+        done
     fi
 
     # 2) Registry check: published version carries the same buildInfo.
@@ -361,6 +375,7 @@ stage-publish() {
             return 0
         fi
         warn "Inputs changed for $version: published $cur (buildInfo ${prev_info:-none}) != $local_tool-$local_src - rebuilding"
+        log "  fingerprint covers: build.sh .babelrc.json package.json README.md LICENSE (ci.yml is NOT part of it)"
     fi
 
     # Race guard: the computed next version is already live.
