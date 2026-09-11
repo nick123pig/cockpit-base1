@@ -300,6 +300,25 @@ published-latest() {
         | jq -r '.[]' | grep "^${re}\.[0-9]\+$" | sort -V | tail -1
 }
 
+# Remember what this pipeline staged/published per cockpit tag, so future runs
+# skip identical-input builds even while the version is still pending approval
+# (npm stage list requires interactive auth, so the registry can't tell us).
+# Manifest is a JSON artifact carried between runs (state/stage-manifest.json).
+record-stage() {
+    local mf="${STAGE_MANIFEST:-state/stage-manifest.json}"
+    mkdir -p "$(dirname "$mf")"
+    local tmp
+    tmp=$(mktemp)
+    if [[ -f "$mf" ]]; then cp "$mf" "$tmp"; else echo '{}' > "$tmp"; fi
+    if jq --arg t "$1" --arg v "$2" --arg tool "$3" --arg src "$4" \
+        '.[$t] = {v: $v, t: $tool, s: $src}' "$tmp" > "${mf}.tmp" 2>/dev/null; then
+        mv "${mf}.tmp" "$mf"
+    else
+        warn "Could not update stage manifest $mf"
+    fi
+    rm -f "$tmp" "${mf}.tmp"
+}
+
 # Build and push into npm's staging area (npm stage publish; needs npm >= 11.15).
 # Uses trusted publishing (OIDC) - no token/OTP. Approve in the browser on npmjs.com.
 stage-publish() {
@@ -313,19 +332,35 @@ stage-publish() {
     # The published package carries a buildInfo fingerprint ("<tooling>-<source>").
     # Unchanged -> nothing to build or stage. Changed tooling or upstream tarball
     # -> rebuild. Force a rebuild with STAGE_FORCE=1.
-    local local_tool local_src cur prev_info
+    local local_tool local_src cur prev_info rec
     local_tool=$(tooling-hash)
     download "$version" >/dev/null 2>&1 || true
     local_src=$(sha256sum "cockpit-$version.tar.xz" 2>/dev/null | awk '{print $1}')
-    cur=$(published-latest "$version")
 
+    # 1) Cross-run memory: this tag was already staged by this pipeline with
+    #    identical inputs (covers versions still awaiting approval).
+    rec=$(jq -c --arg t "$version" '.[$t] // empty' "${STAGE_MANIFEST:-state/stage-manifest.json}" 2>/dev/null || true)
+    if [[ "${STAGE_FORCE:-0}" != "1" && -n "$rec" ]]; then
+        local rt rs rv
+        rt=$(jq -r '.t' <<<"$rec" 2>/dev/null || true)
+        rs=$(jq -r '.s' <<<"$rec" 2>/dev/null || true)
+        rv=$(jq -r '.v' <<<"$rec" 2>/dev/null || true)
+        if [[ "$rt" == "$local_tool" && "$rs" == "$local_src" ]]; then
+            log "No changes: $rv already staged/published with the same tooling+source. Skipping $version."
+            return 0
+        fi
+        log "Inputs changed for $version: last staged $rv (${rt}-${rs}) != $local_tool-$local_src"
+    fi
+
+    # 2) Registry check: published version carries the same buildInfo.
+    cur=$(published-latest "$version")
     if [[ "${STAGE_FORCE:-0}" != "1" && -n "$cur" && -n "$local_tool" && -n "$local_src" ]]; then
         prev_info=$(npm view "$PACKAGE_NAME@$cur" buildInfo 2>/dev/null || true)
         if [[ -n "$prev_info" && "$prev_info" == "$local_tool-$local_src" ]]; then
             log "No changes: published $cur was built with the same tooling+source. Skipping $version."
             return 0
         fi
-        log "Inputs changed for $version: published $cur (buildInfo $prev_info) != $local_tool-$local_src"
+        warn "Inputs changed for $version: published $cur (buildInfo ${prev_info:-none}) != $local_tool-$local_src - rebuilding"
     fi
 
     # Race guard: the computed next version is already live.
@@ -376,6 +411,7 @@ stage-publish() {
     if [[ $rc -ne 0 ]]; then
         if grep -qi "Cannot stage previously published version" <<<"$out" || grep -qi "E409" <<<"$out"; then
             warn "$PACKAGE_NAME@$ver is already staged or published - nothing to do. Approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
+            record-stage "$version" "$ver" "$local_tool" "$local_src"
             cd - > /dev/null || true
             return 0
         fi
@@ -392,6 +428,7 @@ stage-publish() {
         cd - > /dev/null || true
         error "npm stage publish failed (see message above)"
     fi
+    record-stage "$version" "$ver" "$local_tool" "$local_src"
     log "Staged $PACKAGE_NAME@${ver:-$(jq -r '.version' package.json)} (tag: $tag) - approve it at https://www.npmjs.com/package/$PACKAGE_NAME/staged"
     cd - > /dev/null || true
 }

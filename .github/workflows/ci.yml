@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  actions: write # stage-manifest artifact upload/download
   id-token: write # required for trusted publishing
 
 concurrency:
@@ -38,8 +39,28 @@ jobs:
       - name: Ensure npm CLI 11
         run: npm install -g npm@11
 
+      # Cross-run memory for the fingerprint skip: pull the stage-manifest
+      # artifact from the most recent run that produced one, so versions still
+      # pending approval are skipped instead of rebuilt+re-staged.
+      - name: Load previous stage manifest
+        run: |
+          mkdir -p state
+          for id in $(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
+            if gh run download "$id" --name stage-manifest --dir state --quiet 2>/dev/null; then
+              break
+            fi
+          done
+          if [[ -f state/stage-manifest/stage-manifest.json ]]; then
+            mv state/stage-manifest/stage-manifest.json state/stage-manifest.json
+            rmdir state/stage-manifest 2>/dev/null || true
+            echo "::notice::Loaded stage manifest: $(jq -r 'keys | length' state/stage-manifest.json) tags recorded"
+          else
+            echo "::notice::No prior stage manifest - first run will build everything"
+          fi
+
       - name: Build and stage all versions
         env:
+          STAGE_MANIFEST: state/stage-manifest.json
           STAGE_RANGE: "311 367" # first and last integer cockpit major
           STAGE_POINTS: >-
             311.1 311.2 323.1 329.1 334.1 334.2 336.1 336.2 341.1 345.1 345.2
@@ -67,3 +88,12 @@ jobs:
             echo "::error::Failed to stage versions: ${failures[*]}"
             exit 1
           fi
+
+      - name: Save stage manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-manifest
+          path: state/stage-manifest.json
+          if-no-files-found: ignore
+          retention-days: 30
