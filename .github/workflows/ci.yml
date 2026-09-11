@@ -1,9 +1,10 @@
 name: Build & Stage to npm
 
-# Builds each version and pushes it to npm's staging area (npm stage publish).
-# Releases only happen when you Approve on npmjs.com - CI has no tokens, no
-# secrets, no OTP. Auth is npm trusted publishing (OIDC) against this repo
-# + workflow filename configured in the package settings on npmjs.com.
+# Builds every cockpit-base1 version in one sequential loop and pushes each
+# into npm's staging area (npm stage publish). Releases only happen when you
+# Approve on npmjs.com - CI has no tokens, no secrets, no OTP. Auth is npm
+# trusted publishing (OIDC) against this repo + workflow filename configured
+# in the package settings on npmjs.com.
 
 on:
   push:
@@ -19,13 +20,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  stage:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        VERSION: [323, 337, 367]
+    timeout-minutes: 120 # 68 versions x ~40s each, plus slack
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,21 +35,31 @@ jobs:
           # NODE_AUTH_TOKEN, which overrides the OIDC path and breaks
           # trusted publishing (ENEEDAUTH). OIDC needs to be the only auth.
 
-      # Runners ship an older npm; stage publish needs >= 11.15
       - name: Ensure npm CLI 11
         run: npm install -g npm@11
 
-      # DIAGNOSTIC: print the OIDC env + npm config so the real staged-publish
-      # auth error is visible (npm 11 swallows OIDC exchange errors silently).
-      - name: Diagnose npm OIDC environment
+      - name: Build and stage all versions
+        env:
+          STAGE_RANGE: "300 367" # first and last cockpit major to stage
         run: |
-          echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:+<set>}"
-          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+<set>}"
-          echo "NODE_AUTH_TOKEN=${NODE_AUTH_TOKEN:+<set>}"
-          npm --version
-
-      - name: Build and stage package to npm
-        run: ./build.sh stage-publish ${{ matrix.VERSION }}
-
-      - name: Clean up build artifacts
-        run: ./build.sh cleanup
+          set -uo pipefail
+          versions="$(seq $STAGE_RANGE)"
+          export STAGE_VERSIONS="$versions"
+          echo "::notice::Staging cockpit versions: $versions"
+          failures=()
+          for v in $versions; do
+            echo "==================== staging version $v ===================="
+            if ./build.sh stage-publish "$v"; then
+              echo "::notice::staged $v"
+            else
+              echo "::warning::FAILED to stage $v"
+              failures+=("$v")
+            fi
+            ./build.sh cleanup >/dev/null 2>&1 || true
+          done
+          echo "==================== summary ===================="
+          echo "failed versions: ${failures[*]:-none}"
+          if (( ${#failures[@]} > 0 )); then
+            echo "::error::Failed to stage versions: ${failures[*]}"
+            exit 1
+          fi

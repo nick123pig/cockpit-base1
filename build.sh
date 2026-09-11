@@ -172,8 +172,15 @@ package() {
     
     # Create package.json. 'repository' MUST point at the real GitHub repo:
     # trusted publishing (npm publish/stage publish via OIDC) validates it.
+    # 'buildInfo' fingerprints the tooling+source used, so future CI runs can
+    # skip rebuilding a version whose inputs haven't changed.
     local repo_url="${REPOSITORY_URL:-git+https://github.com/nick123pig/cockpit-base1.git}"
-    local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\", \"repository\": {\"type\": \"git\", \"url\": \"$repo_url\"}}"
+    local bmaj btool bsrc build_info
+    bmaj=${next_version%%.*}
+    btool=$(tooling-hash 2>/dev/null || true)
+    bsrc=$(sha256sum "cockpit-$bmaj.tar.xz" 2>/dev/null | awk '{print $1}')
+    build_info="${btool:-none}-${bsrc:-none}"
+    local base_package="{\"name\": \"$PACKAGE_NAME\", \"version\": \"$next_version\", \"main\": \"index.mjs\", \"type\": \"module\", \"license\": \"MIT\", \"repository\": {\"type\": \"git\", \"url\": \"$repo_url\"}, \"buildInfo\": \"$build_info\"}"
     local build_package="$BUILD_DIR/package.json"
     
     if [[ -f "$build_package" ]]; then
@@ -271,6 +278,20 @@ stage() {
     log "Staged $tarball"
 }
 
+# Fingerprint of everything in this repo that shapes the published output:
+# build.sh, babel config, dependency spec, and the files that ship in the
+# package (README/LICENSE). Any change here invalidates every published build.
+tooling-hash() {
+    sha256sum build.sh .babelrc.json package.json README.md LICENSE 2>/dev/null \
+        | sha256sum | awk '{print $1}'
+}
+
+# Highest published version for a cockpit major (e.g. 337 -> 337.0.10, "" if none).
+published-latest() {
+    npm view "$PACKAGE_NAME" versions --json 2>/dev/null \
+        | jq -r '.[]' | grep "^$1\.[0-9]\+\.[0-9]\+$" | sort -V | tail -1
+}
+
 # Build and push into npm's staging area (npm stage publish; needs npm >= 11.15).
 # Uses trusted publishing (OIDC) - no token/OTP. Approve in the browser on npmjs.com.
 stage-publish() {
@@ -280,15 +301,42 @@ stage-publish() {
         error "npm stage publish requires npm CLI v11.15.0+ (found $(npm --version 2>/dev/null)). Update it with: npm install -g npm@11"
     fi
 
+    # --- Skip when npm already has this major built from identical inputs ---
+    # The published package carries a buildInfo fingerprint ("<tooling>-<source>").
+    # Unchanged -> nothing to build or stage. Changed tooling or upstream tarball
+    # -> rebuild. Force a rebuild with STAGE_FORCE=1.
+    local local_tool local_src cur prev_info
+    local_tool=$(tooling-hash)
+    download "$version" >/dev/null 2>&1 || true
+    local_src=$(sha256sum "cockpit-$version.tar.xz" 2>/dev/null | awk '{print $1}')
+    cur=$(published-latest "$version")
+
+    if [[ "${STAGE_FORCE:-0}" != "1" && -n "$cur" && -n "$local_tool" && -n "$local_src" ]]; then
+        prev_info=$(npm view "$PACKAGE_NAME@$cur" buildInfo 2>/dev/null || true)
+        if [[ -n "$prev_info" && "$prev_info" == "$local_tool-$local_src" ]]; then
+            log "No changes: published $cur was built with the same tooling+source. Skipping $version."
+            return 0
+        fi
+        log "Inputs changed for $version: published $cur (buildInfo $prev_info) != $local_tool-$local_src"
+    fi
+
+    # Race guard: the computed next version is already live.
+    local next
+    next=$(version "$version" 2>/dev/null || true)
+    if [[ -n "$next" ]] && npm view "$PACKAGE_NAME@$next" version >/dev/null 2>&1; then
+        warn "$PACKAGE_NAME@$next is already published on npm - nothing to do"
+        return 0
+    fi
+
     log "Building and staging $PACKAGE_NAME for version $version"
     full "$version" false
 
     # npm rejects implicitly tagging "latest" when the new version is lower
     # than the current latest (parallel cockpit majors). Only the newest major
-    # may own "latest"; older lines get their own stable dist-tag.
-    local majors="323 337 367"
+    # in STAGE_VERSIONS may own "latest"; older lines get their own tag.
+    local versions="${STAGE_VERSIONS:-323 337 367}"
     local highest
-    highest=$(echo "$majors" | tr ' ' '\n' | sort -n | tail -1)
+    highest=$(echo "$versions" | tr ' ' '\n' | sort -n | tail -1)
     local tag=latest
     if [[ "$version" != "$highest" ]]; then
         tag="line-$version"
